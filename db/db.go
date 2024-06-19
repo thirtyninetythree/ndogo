@@ -1,5 +1,7 @@
 package db
 
+import "sort"
+
 type Error struct {
 	Msg string
 }
@@ -36,18 +38,20 @@ func NewDatabase() *Database {
 	}
 }
 
-func (db *Database) CreateCollection(name string, dimension int, distance DistanceMetric) error {
+func (db *Database) CreateCollection(name string, dimension int, distance DistanceMetric) (*Collection, error) {
 	if _, exists := db.Collections[name]; exists {
-		return ErrUniqueViolation
+		return nil, ErrUniqueViolation
 	}
 
-	db.Collections[name] = &Collection{
+	collection := &Collection{
 		Dimension:  dimension,
 		Distance:   distance,
 		Embeddings: make([]*Embedding, 0),
 	}
 
-	return nil
+	db.Collections[name] = collection
+
+	return collection, nil
 }
 
 func (db *Database) DeleteCollection(name string) error {
@@ -69,11 +73,42 @@ func (db *Database) InsertIntoCollection(name string, embedding *Embedding) erro
 		return ErrDimensionMismatch
 	}
 
-	// Normalize the vector if the distance metric is cosine
-	if collection.Distance == CosineDistance {
+	if collection.Distance == Cosine {
 		embedding.Vector = normalize(embedding.Vector)
 	}
 
 	collection.Embeddings = append(collection.Embeddings, embedding)
 	return nil
+}
+
+func (db *Database) FindSimilarVectors(collectionName string, queryVector []float32, k int) ([]ScoreIndex, error) {
+	collection, exists := db.Collections[collectionName]
+	if !exists {
+		return nil, ErrNotFound
+	}
+
+	if len(queryVector) != collection.Dimension {
+		return nil, ErrDimensionMismatch
+	}
+
+	normalizedQueryVector := normalize(queryVector)
+
+	distances := make([]ScoreIndex, len(collection.Embeddings))
+	distanceFunc := getDistanceFunc(collection.Distance)
+	for i, embedding := range collection.Embeddings {
+		normalizedDbVector := embedding.Vector
+		if collection.Distance == Cosine {
+			normalizedDbVector = normalize(embedding.Vector)
+		}
+
+		score := distanceFunc(normalizedQueryVector, normalizedDbVector, 0.0)
+
+		distances[i] = ScoreIndex{Score: score, Index: i}
+	}
+
+	sort.Slice(distances, func(i, j int) bool {
+		return distances[i].Score < distances[j].Score
+	})
+
+	return distances[:k], nil
 }

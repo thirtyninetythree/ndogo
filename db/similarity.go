@@ -1,4 +1,4 @@
-package similarity
+package db
 
 import (
 	"fmt"
